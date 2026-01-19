@@ -9,19 +9,15 @@ network:
   version: 2
   ethernets:
     enp0s3:
-      # Usar sólo cuando conexión por IP estática no es accesible
-      # dhcp4: true
-      addresses: [10.0.2.15/24] # Se obtiene con `ip a`
-    routes:
-      - to: deault
-      via: 10.0.2.2 # Se obtiene con 'iproute' o 'ip route'
-    nameservers:
-      addresses: [10.0.2.15] # Se obtiene con resolvectl
-      search: [jgsdaw.local]
+      addresses: [10.0.2.15/24]
+      routes:
+        - to: default # Corregido: default
+          via: 10.0.2.2
     ens0s8:
-      # dhcp4: true
-      addresses: [192.168.7.50/24]
-    # Usar sólo cuando conexión puente es necesario, sino comentar
+      addresses: [192.168.7.50/24] # Usa .50 o .250, pero sé consistente
+      nameservers:
+        addresses: [127.0.0.1] # El servidor DNS se consulta a sí mismo
+        search: [jgsdaw.local]
     ens0s9:
       dhcp4: true
 ```
@@ -33,13 +29,13 @@ network:
   version: 2
   ethernets:
     enp0s3:
-      addresses: [192.168.7.40/24] # 40 es de webserver o la que de el profesor
-    nameservers:
-      addresses: [192.168.7.50] # Dirección del DNS
-      search: [jgsdaw.local]
-    routes:
-      - to: deault
-      via: 192.168.7.50 # Dirección del DNS
+      addresses: [192.168.7.40/24]
+      nameservers:
+        addresses: [192.168.7.50] # IP del servidor DNS
+        search: [jgsdaw.local]
+      routes:
+        - to: default # Corregido: antes deault
+          via: 192.168.7.50
 ```
 
 Aplicar cambios:
@@ -58,14 +54,18 @@ sudo nano /etc/bind/named.conf.options
 
 ```bash
 options {
-    directory "/var/cache/bind";114
+    directory "/var/cache/bind";
     ...
+    listen-on { any; };
+    allow-query { localhost; 192.168.XX.0/24; };
+
     forwarders {
         // 0.0.0.0
-        10.2.1.254 # Se obtiene con 'resolvectl'
+        10.2.1.254; # Se obtiene con 'resolvectl'
         // 8.8.8.8
     };
-    ...
+
+    dnssec-validation no;
 };
 ```
 
@@ -94,11 +94,13 @@ sudo nano named.conf.local
 ```
 
 ```bash
+// Zona directa
 zone "jgsdaw.local" {
     type master;
     file "/etc/bind/zonas/db.jgsdaw.local";
 };
 
+// Zona inversa
 zone "7.168.192.in-addr.arpa" {
     type master;
     file "/etc/bind/zonas/db.7.168.192.in-addr.arpa";
@@ -120,31 +122,34 @@ sudo nano db.jgsdaw.local
 
 # Añadir las zonas
 @             IN      NS      ns1
-@             IN      A       192.168.7.250
-ns1           IN      A       192.168.7.250
-servidor      IN      A       192.168.7.250
-jgscli        IN      A       192.168.7.XXX # IP obtenido con `ip a` en enp0s3
-server        IN      A       192.168.7.250
-web           IN      A       192.168.7.40 # Ejemplo, puede ser la 150 o cualquiera en vez de 40
-ftp...
-gitlab...
+@             IN      A       192.168.XX.50
+ns1           IN      A       192.168.XX.50
+servidor      IN      A       192.168.XX.50
+server        IN      CNAME   servidor
+gitlab        IN      A       192.168.XX.100
+web           IN      A       192.168.XX.150
+ftp           IN      A       192.168.XX.200
+jgscli        IN      A       192.168.XX.XXX ; # IP obtenido con `ip a` en enp0s3
 ```
 
 Copiar un archivo de nombres de zona con la dirección IP:
 
 ```bash
-sudo cp db.jgs.local db.192.168.7.in-addr-arpa
-sudo nano db.192.168.7.in-addr-arpa
+sudo cp db.jgs.local db.7.168.192.in-addr.arpa
+sudo nano db.7.168.192.in-addr.arpa
 ```
 
 ```bash
 # Actualizar direcciones y nombres inferiores
+@       IN      SOA     ns1.jgsdaw.local. root.jgsdaw.local. (...
+
+// Añadir las zonas
 @             IN      NS      ns1.jgsdaw.local.
-250           IN      PTR     ns1.jgsdaw.local.
-XXX           IN      PTR     jgscli.jgsdaw.local. # Última cifra de la IP obtenida con `ip a` en enp0s3
-40            IN      PTR     web.jgsdaw.local. # Ejemplo, puede ser la 150 o cualquiera en vez de 40
-XXX           IN      PTR     ftp.jgsdaw.local. # IP de FTP o lo que toque, dado por el profesor
-...
+50            IN      PTR     ns1.jgsdaw.local.
+50            IN      PTR     servidor.jgsdaw.local.
+100           IN      PTR     gitlab.jgsdaw.local.
+150           IN      PTR     web.jgsdaw.local.
+200           IN      PTR     ftp.jgsdaw.local.
 ```
 
 Ir al root de la consola y configurar las zonas:
@@ -169,7 +174,7 @@ Comprobar la conexión a ns1 con nslookup:
 nslookup ns1
 nslookup ns1.jgsdaw.local
 nslookup jgscli
-nslookup 192.168.7.250
+nslookup 192.168.7.50
 ```
 
 Acceder por SSH al servidor comprobando nombre de dominio:
